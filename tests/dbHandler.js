@@ -7,7 +7,8 @@ const crypto = require('crypto');
 // files in parallel workers by default, and every file's afterEach wipes
 // every collection in its database (see clear() below) — sharing one
 // database across files meant one file's cleanup could delete another
-// file's in-flight test data. A private database per file/connection avoids
+// file's in-flight test data (e.g. a just-created, not-yet-used Brand),
+// causing spurious failures. A private database per file/connection avoids
 // that entirely while still reusing one mongod process.
 let connectedUri;
 
@@ -18,14 +19,14 @@ const connect = async () => {
     : `${process.env.MONGO_URI}/`;
 
   connectedUri = `${baseUri}${dbName}`;
-  await mongoose.connect(connectedUri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    useFindAndModify: false,
-    useCreateIndex: true
-  });
+  // Same strictQuery setting as utils/db.js (Mongoose 5 behaviour).
+  mongoose.set('strictQuery', false);
+  await mongoose.connect(connectedUri);
 };
 
+// The exact per-file database URI connect() picked, for tests that need to
+// point some *other* process at this same isolated database rather than the
+// shared base one.
 const currentUri = () => connectedUri;
 
 const disconnect = async () => {
@@ -33,6 +34,8 @@ const disconnect = async () => {
   await mongoose.connection.close();
 };
 
+// Wipes all collections between tests so one test's data can't leak into
+// the next, without paying the cost of reconnecting each time.
 const clear = async () => {
   const collections = mongoose.connection.collections;
   for (const key of Object.keys(collections)) {

@@ -4,6 +4,7 @@ const request = require('supertest');
 const Client = require('socket.io-client');
 
 process.env.PORT = '0';
+process.env.LOG_LEVEL = 'silent';
 
 // index.js is a pure side-effect script (no module.exports) that calls
 // app.listen(...) internally, so the only way to get a handle on the real
@@ -18,12 +19,8 @@ express.application.listen = function (...args) {
 };
 
 beforeAll(async () => {
-  // Neither test below touches a DB-backed route, so index.js's own (real,
-  // un-mocked) setupDB() call is left to connect on its own — using the
-  // shared in-memory mongod's base URI from tests/setupEnv.js — without
-  // needing to coordinate with tests/dbHandler.js's per-file database
-  // naming (mongoose is a single shared module within this file's Jest
-  // module registry either way).
+  // index.js's own (real, un-mocked) setupDB() connects to the shared
+  // in-memory mongod from tests/setupEnv.js.
   require('./index');
   express.application.listen = originalListen;
 
@@ -31,16 +28,46 @@ beforeAll(async () => {
     if (capturedServer.listening) return resolve();
     capturedServer.once('listening', resolve);
   });
+
+  if (mongoose.connection.readyState !== 1) {
+    await new Promise(resolve => mongoose.connection.once('connected', resolve));
+  }
 });
 
+// Shutting down through the real SIGTERM handler both cleans up after the
+// tests and proves graceful shutdown closes Socket.IO, the server and the DB.
 afterAll(async () => {
-  await new Promise(resolve => capturedServer.close(resolve));
-  await mongoose.disconnect();
+  const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+  process.emit('SIGTERM');
+  await new Promise(resolve => {
+    const check = () => (exitSpy.mock.calls.length ? resolve() : setTimeout(check, 20));
+    check();
+  });
+
+  expect(exitSpy).toHaveBeenCalledWith(0);
+  expect(capturedServer.listening).toBe(false);
+  expect(mongoose.connection.readyState).toBe(0);
+  exitSpy.mockRestore();
 });
 
 it('starts a real, listening HTTP server wired up with the API routes', async () => {
   const res = await request(capturedServer).get('/api/does-not-exist');
   expect(res.status).toBe(404);
+});
+
+it('serves the liveness and readiness probes', async () => {
+  expect((await request(capturedServer).get('/health')).status).toBe(200);
+  expect((await request(capturedServer).get('/ready')).status).toBe(200);
+});
+
+it('labels metrics with the route template, not the raw URL', async () => {
+  await request(capturedServer).post('/api/contact/add').send({});
+
+  const res = await request(capturedServer).get('/metrics');
+  expect(res.status).toBe(200);
+  expect(res.text).toContain('route="/api/contact/add"');
+  expect(res.text).toContain('route="other"');
+  expect(res.text).toContain('service="notification-service"');
 });
 
 it('attaches Socket.IO to the same HTTP server', async () => {

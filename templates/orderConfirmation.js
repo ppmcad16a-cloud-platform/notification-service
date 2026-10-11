@@ -2,18 +2,30 @@
 // in a <style> block since most email clients strip external/head styles
 // out. Called by routes/api/notification.js's POST /order-confirmation,
 // which commerce_server hits over HTTP after placing an order.
+//
+// Every value that came from users/merchants (names, ids) goes through
+// escapeHtml so a product called `<img src=x onerror=...>` is shown as text
+// instead of being injected into the e-mail as HTML.
+const escapeHtml = value =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 const orderConfirmationTemplate = ({ user, order }) => {
   const itemRows = (order.products || [])
     .filter(item => item.status !== 'Cancelled')
     .map(
       item => `
         <tr>
-          <td style="padding:10px 0;border-bottom:1px solid #eee;">${
+          <td style="padding:10px 0;border-bottom:1px solid #eee;">${escapeHtml(
             item.product?.name || 'Product'
-          }</td>
-          <td style="padding:10px 0;border-bottom:1px solid #eee;text-align:center;">${
+          )}</td>
+          <td style="padding:10px 0;border-bottom:1px solid #eee;text-align:center;">${escapeHtml(
             item.quantity
-          }</td>
+          )}</td>
           <td style="padding:10px 0;border-bottom:1px solid #eee;text-align:right;">$${Number(
             item.totalPrice || 0
           ).toFixed(2)}</td>
@@ -24,9 +36,9 @@ const orderConfirmationTemplate = ({ user, order }) => {
   return `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#333333;">
       <h2 style="color:#111111;">Thank you for your order${
-        user?.firstName ? `, ${user.firstName}` : ''
+        user?.firstName ? `, ${escapeHtml(user.firstName)}` : ''
       }!</h2>
-      <p>Your order <strong>#${order._id}</strong> has been placed successfully.</p>
+      <p>Your order <strong>#${escapeHtml(order._id)}</strong> has been placed successfully.</p>
 
       <table style="width:100%;border-collapse:collapse;margin:20px 0;">
         <thead>
