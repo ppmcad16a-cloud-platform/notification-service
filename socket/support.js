@@ -59,13 +59,18 @@ exports.supportHandler = (io, socket) => {
     const user = findUserBySocketId(socket.id);
     const userTo = findUserById(to);
 
+    // Unknown sender (state lost after a restart) or unknown recipient
+    // (bad/stale id from the client): ignore the message instead of
+    // throwing on user.id / userTo.socketId below.
+    if (!user || !userTo) return;
+
     const message = {
       id: uuidv4(),
       value: text,
       time: Date.now(),
       user: user,
       from: user.id,
-      to: userTo?.id
+      to: userTo.id
     };
 
     messages.push(message);

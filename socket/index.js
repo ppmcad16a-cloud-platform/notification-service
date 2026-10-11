@@ -19,7 +19,15 @@ const authHandler = async (socket, next) => {
     }
 
     const { secret } = keys.jwt;
-    const payload = jwt.verify(tokenValue, secret);
+    // jwt.verify THROWS for an expired, tampered or garbage token. Inside
+    // this async middleware an uncaught throw would leave the handshake
+    // hanging forever (next() never called), so reject cleanly instead.
+    let payload;
+    try {
+      payload = jwt.verify(tokenValue, secret);
+    } catch (err) {
+      return next(new Error('invalid token'));
+    }
     const id = payload.id.toString();
     const user = await User.findById(id);
 
@@ -67,6 +75,9 @@ const socket = server => {
   };
 
   io.on('connection', onConnection);
+
+  // Returned so index.js can close all chat connections on shutdown.
+  return io;
 };
 
 module.exports = socket;

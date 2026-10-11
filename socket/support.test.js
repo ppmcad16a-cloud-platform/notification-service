@@ -75,6 +75,21 @@ describe('authHandler (socket/index.js)', () => {
     client.close();
   });
 
+  it('rejects a garbage token cleanly instead of hanging the handshake', async () => {
+    const client = connectClient('Bearer not-a-real-jwt');
+    const err = await onceEvent(client, 'connect_error');
+    expect(err.message).toBe('invalid token');
+    client.close();
+  });
+
+  it('rejects a token signed with a different secret', async () => {
+    const forged = require('jsonwebtoken').sign({ id: newId() }, 'some-other-secret');
+    const client = connectClient(`Bearer ${forged}`);
+    const err = await onceEvent(client, 'connect_error');
+    expect(err.message).toBe('invalid token');
+    client.close();
+  });
+
   it('rejects a token whose user no longer exists', async () => {
     const token = createToken({ _id: newId() });
     const client = connectClient(token);
@@ -236,6 +251,45 @@ describe('supportHandler (socket/support.js)', () => {
     expect(memberReceived.value).toBe('Hello admin');
     expect(adminReceived.from).toBe(member._id.toString());
     expect(adminReceived.to).toBe(admin._id.toString());
+
+    adminClient.close();
+    memberClient.close();
+  });
+
+  it('message: ignores a message to an unknown recipient without crashing', async () => {
+    const member = await createUser({ role: ROLES.Member });
+    const memberClient = connectClient(createToken(member));
+    await onceEvent(memberClient, 'connect');
+
+    memberClient.emit('message', { text: 'anyone there?', to: newId().toString() });
+
+    // The socket is still healthy and nothing was stored.
+    const historyPromise = onceEvent(memberClient, 'getMessages');
+    memberClient.emit('getMessages');
+    expect(await historyPromise).toEqual([]);
+
+    memberClient.close();
+  });
+
+  it('message: ignores a message from a socket with no registered user', async () => {
+    const admin = await createUser({ role: ROLES.Admin });
+    const adminClient = connectClient(createToken(admin));
+    await onceEvent(adminClient, 'connect');
+
+    const member = await createUser({ role: ROLES.Member });
+    const memberClient = connectClient(createToken(member));
+    await onceEvent(memberClient, 'connect');
+
+    // Simulate lost in-memory state (e.g. after a restart) for the sender.
+    support.users.splice(
+      support.users.findIndex(u => u.id === member._id.toString()),
+      1
+    );
+    memberClient.emit('message', { text: 'hello?', to: admin._id.toString() });
+
+    const historyPromise = onceEvent(adminClient, 'getMessages');
+    adminClient.emit('getMessages');
+    expect(await historyPromise).toEqual([]);
 
     adminClient.close();
     memberClient.close();

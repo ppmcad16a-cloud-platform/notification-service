@@ -32,6 +32,28 @@ it('greets the user by name, lists non-cancelled items, and shows totals', () =>
   expect(html).toContain('21.00');
 });
 
+it('escapes HTML in user- and merchant-supplied values', () => {
+  const html = orderConfirmationTemplate({
+    user: { firstName: '<b>Eve</b>' },
+    order: {
+      _id: '"><script>alert(1)</script>',
+      products: [
+        {
+          product: { name: `<img src=x onerror='steal()'>` },
+          quantity: 1,
+          totalPrice: 5,
+          status: 'Not processed'
+        }
+      ]
+    }
+  });
+
+  expect(html).not.toMatch(/<script>|<img|<b>Eve/);
+  expect(html).toContain('&lt;b&gt;Eve&lt;/b&gt;');
+  expect(html).toContain('&lt;img src=x onerror=&#39;steal()&#39;&gt;');
+  expect(html).toContain('&quot;&gt;&lt;script&gt;');
+});
+
 it('falls back to a generic greeting/name and zeroed totals when data is missing', () => {
   const html = orderConfirmationTemplate({
     user: {},
